@@ -1,8 +1,10 @@
 package core
 
 import (
+	"crypto/tls"
 	"errors"
 	"fmt"
+	"net"
 	"strings"
 	"time"
 
@@ -10,8 +12,9 @@ import (
 )
 
 type Config struct {
-	Servers []string
-	Auth    *Auth
+	Servers   []string
+	Auth      *Auth
+	TLSConfig *tls.Config
 
 	SlientLog bool
 }
@@ -41,20 +44,31 @@ func (emptyLogger) Printf(format string, a ...interface{}) {
 	// do nothing
 }
 
-func (c *Config) Connect() (conn *zk.Conn, err error) {
+func (c *Config) Connect() (*zk.Conn, error) {
 	logger := zk.WithLogger(zk.DefaultLogger)
 	if c.SlientLog {
 		logger = zk.WithLogger(emptyLogger{})
 	}
-	conn, e, err := zk.Connect(c.Servers, time.Second, logger)
+	var conn *zk.Conn
+	var e <-chan zk.Event
+	var err error
+
+	if c.TLSConfig == nil {
+		conn, e, err = zk.Connect(c.Servers, time.Second, logger)
+	} else {
+		dialer := func(network, address string, timeout time.Duration) (net.Conn, error) {
+			return tls.DialWithDialer(&net.Dialer{Timeout: timeout}, network, address, c.TLSConfig)
+		}
+		conn, e, err = zk.Connect(c.Servers, time.Second, logger, zk.WithDialer(dialer))
+	}
 	if err != nil {
-		return
+		return nil, err
 	}
 	if c.Auth != nil {
 		auth := c.Auth
 		err = conn.AddAuth(auth.Scheme, auth.Payload)
 		if err != nil {
-			return
+			return nil, err
 		}
 	}
 	n := 0
@@ -77,5 +91,5 @@ loop:
 			fmt.Sprintf("Failed to connect to %s!", strings.Join(c.Servers, ",")),
 		)
 	}
-	return
+	return conn, err
 }

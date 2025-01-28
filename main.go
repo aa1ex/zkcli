@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -21,6 +23,9 @@ func main() {
 	servers := flag.String("s", "127.0.0.1:2181", "Servers")
 	username := flag.String("u", "", "Username")
 	password := flag.String("p", "", "Password")
+	certPath := flag.String("cert", "", "Path to client cert")
+	keyPath := flag.String("key", "", "Path to client key")
+	caPath := flag.String("ca", "", "Path to CA cert")
 	showVersion := flag.Bool("version", false, "Show version info")
 	verboseLog := flag.Bool("v", false, "Set to true if want to enable zk log, usefull for diagnose zk problems")
 	homePath, _ := homedir.Dir()
@@ -44,6 +49,31 @@ func main() {
 			"digest", fmt.Sprintf("%s:%s", *username, *password),
 		)
 		config.Auth = auth
+	}
+	if *certPath != "" && *keyPath != "" {
+		var cert tls.Certificate
+		cert, err := tls.LoadX509KeyPair(*certPath, *keyPath)
+		if err != nil {
+			fmt.Printf("%s\n", err)
+			os.Exit(1)
+		}
+		config.TLSConfig = &tls.Config{
+			Certificates: []tls.Certificate{cert},
+		}
+		if *caPath != "" {
+			roots := x509.NewCertPool()
+			certs, err := os.ReadFile(*caPath)
+			if err != nil {
+				fmt.Printf("%s\n", err)
+				os.Exit(1)
+			}
+			if ok := roots.AppendCertsFromPEM(certs); !ok {
+				fmt.Println("failed to load CA certificates")
+				os.Exit(1)
+			}
+			config.TLSConfig.ClientCAs = roots
+			config.TLSConfig.ClientAuth = tls.RequireAndVerifyClientCert
+		}
 	}
 	conn, err := config.Connect()
 	if err != nil {
